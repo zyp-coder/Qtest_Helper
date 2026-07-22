@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qoder Test Helper - 测试报告</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="header-left">
+        <img src="icons/icon48.png" alt="Logo" width="32" height="32">
+        <div>
+          <h1>Qoder Test Helper</h1>
+          <p class="subtitle">测试报告中心</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-outline" id="export-all-btn">导出全部</button>
+        <button class="btn btn-danger" id="clear-all-btn">清空数据</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="selector">
+        <span class="tab-icon">🎯</span>
+        元素选择器报告
+        <span class="tab-badge" id="selector-badge">0</span>
+      </button>
+      <button class="tab" data-tab="recorder">
+        <span class="tab-icon">📹</span>
+        日志采集报告
+        <span class="tab-badge" id="recorder-badge">0</span>
+      </button>
+    </nav>
+
+    <main class="content">
+      <!-- 元素选择器报告列表 -->
+      <div class="tab-panel" id="selector-panel">
+        <div class="empty-state" id="selector-empty">
+          <div class="empty-icon">🎯</div>
+          <h3>暂无元素选择器报告</h3>
+          <p>使用元素选择器功能后，报告将在此处显示</p>
+        </div>
+        <div class="report-list" id="selector-list"></div>
+      </div>
+
+      <!-- 日志采集报告列表 -->
+      <div class="tab-panel hidden" id="recorder-panel">
+        <div class="empty-state" id="recorder-empty">
+          <div class="empty-icon">📹</div>
+          <h3>暂无日志采集报告</h3>
+          <p>使用日志采集器功能后，报告将在此处显示</p>
+        </div>
+        <div class="report-list" id="recorder-list"></div>
+      </div>
+
+      <!-- 报告详情 -->
+      <div class="report-detail hidden" id="report-detail">
+        <div class="detail-header">
+          <button class="btn btn-back" id="back-btn">← 返回列表</button>
+          <div class="detail-actions">
+            <button class="btn btn-outline" id="export-detail-btn">导出JSON</button>
+            <button class="btn btn-outline" id="copy-detail-btn">复制JSON</button>
+          </div>
+        </div>
+        <div class="detail-content" id="detail-content"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="report.js"></script>
+</body>
+</html>
