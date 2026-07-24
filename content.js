@@ -5,21 +5,12 @@
 (() => {
   if (document.getElementById('qoder-floating-panel')) return;
 
-  // ==================== 问题分类定义 ====================
-  const ISSUE_CATEGORIES = {
-    'ui':        { label: '🎨 UI/样式',    hint: '元素显示异常、样式错位、布局问题' },
-    'function':  { label: '⚙️ 功能缺陷',   hint: '功能不可用、交互异常、逻辑错误' },
-    'data':      { label: '📊 数据问题',    hint: '数据展示错误、接口返回异常、数据不一致' },
-    'perf':      { label: '⚡ 性能问题',    hint: '页面加载慢、操作卡顿、资源占用高' },
-    'feature':   { label: '✨ 新功能',      hint: '新增功能需求、功能扩展、能力增强' }
-  };
-
-  const FLOW_CATEGORIES = {
-    'flow_break':  { label: '🔗 流程断链',   hint: '流程中断、步骤缺失、跳转异常' },
-    'flow_func':   { label: '⚙️ 功能缺陷',  hint: '操作无响应、功能不可用、逻辑错误' },
-    'flow_data':   { label: '📊 数据异常',   hint: '提交失败、数据丢失、接口返回异常' },
-    'flow_perf':   { label: '⚡ 流程卡顿',   hint: '操作延迟、加载缓慢、等待时间过长' },
-    'flow_ux':     { label: '💡 流程体验',   hint: '步骤冗余、引导不清、操作不直观' }
+  // ==================== 问题分类：按“修改级别/处理深度”分类（供AI快速判断） ====================
+  const ISSUE_LEVELS = {
+    'L1_frontend': { label: '🎨 前端修改',      hint: '仅前端UI/样式/交互调整，不涉及后端接口与业务流程变更' },
+    'L2_backend':  { label: '🔧 后端/业务流程',  hint: '涉及后端接口、业务逻辑或数据流程的变更' },
+    'L3_module':   { label: '🏗️ 模块重做',      hint: '问题根源在架构层面，需整个模块重构或大范围整改' },
+    'L4_feature':  { label: '✨ 新需求',         hint: '现有能力无法满足，需要新增功能或能力扩展' }
   };
 
   // ==================== 状态管理 ====================
@@ -224,9 +215,10 @@
   }
 
   function recordUserAction(e) {
+    if (isPanelElement(e.target)) return; // 不记录对工具面板自身的操作
     recorderData.userActions.push({
       type: e.type, timestamp: Date.now(),
-      target: { tag: e.target.tagName?.toLowerCase(), id: e.target.id || null, selector: getXPath(e.target) },
+      target: { tag: e.target.tagName?.toLowerCase(), id: e.target.id || null, selector: getXPath(e.target), text: (e.target.textContent?.trim().substring(0, 40)) || '' },
       key: e instanceof KeyboardEvent ? { key: e.key } : null,
       mouse: e instanceof MouseEvent ? { x: e.clientX, y: e.clientY } : null
     });
@@ -281,8 +273,7 @@
 
       pageIssues.forEach((issue) => {
         globalIdx++;
-        const catMap = issue.type === 'flow' ? FLOW_CATEGORIES : ISSUE_CATEGORIES;
-        const catLabel = issue.category ? catMap[issue.category]?.label || '' : '';
+        const catLabel = issue.category ? ISSUE_LEVELS[issue.category]?.label || '' : '';
         const typeTag = issue.type === 'flow' ? '`流程` ' : '';
         md += `### ${globalIdx}. ${typeTag}${issue.description}${catLabel ? ` _${catLabel}_` : ''}\n\n`;
 
@@ -290,6 +281,17 @@
         if (issue.type === 'element' && issue.elements.length > 0) {
           md += `**元素:**\n`;
           issue.elements.forEach(el => { md += `- \`${el.xpath}\`\n`; });
+          md += `\n`;
+        }
+
+        // 流程问题：显示操作序列（点击顺序），即使无日志也能还原用户行为
+        if (issue.type === 'flow' && (issue.actions || []).length > 0) {
+          md += `**操作序列** (${issue.actions.length}步):\n\n`;
+          issue.actions.forEach((a, i) => {
+            const tgt = a.target || {};
+            const label = tgt.text ? `"${tgt.text}"` : (tgt.id ? `#${tgt.id}` : `<${tgt.tag || '?'}>`);
+            md += `${i + 1}. \`${a.type}\` ${label}${tgt.selector ? ` — \`${tgt.selector}\`` : ''}\n`;
+          });
           md += `\n`;
         }
 
@@ -349,73 +351,76 @@
     const totalErrors = issues.reduce((s, iss) => s + (iss.logs || []).filter(l => l.type === 'error' || l.type === 'unhandledrejection').length, 0);
     const totalFailed = issues.reduce((s, iss) => s + (iss.networkRequests || []).filter(r => r.type === 'network-error' || r.status >= 400).length, 0);
 
-    const aiPrompt = `你是一位资深全栈架构师，同时精通前端架构与视觉设计。请对上方报告中的每个问题进行深度分析。
+    const aiPrompt = `你是一位资深全栈架构师兼产品质量官。请对上方报告中的每个问题进行**研究式分析**，严格遵循下面的方法论。
 
-注意：每个问题的描述、页面路径、元素XPath及日志已在报告正文中，你无需重复描述问题，直接进行分析即可。
+注意：每个问题的描述、页面路径、元素XPath及日志已在报告正文中，无需重复描述问题。
 
-## 分析策略（根据问题分类选择对应路径）
+## ⛔ 铁律（防幻觉，不可违反）
 
-### A. 功能/缺陷/数据/性能/新功能类问题
-→ 深入架构层面分析
+1. **先事实，后结论**：严禁未查真实代码就凭经验臆测。先自己判断需要哪些资料 → 主动去代码库检索/阅读/追踪 → 资料齐全后再下结论。
+2. **结论可追溯**：每个判断都要能指向具体文件/代码行/页面元素，禁止凭印象。资料不足时，明确说出还缺什么、要看哪些文件，而不是编造。
+3. **用户反馈优先**：用户指出的方向（如“宽度不够”“显示不对”）必须先按此方向排查，不得以“代码逻辑正确”为由反驳。
 
-1. **架构现状诊断**
-   - 当前系统的模块划分和职责边界是否清晰
-   - 模块间的联动关系和依赖方向是否合理
-   - 数据流向是否清晰（从数据源→API→状态管理→视图的完整链路）
-   - 组件通信模式是否得当（props/events/状态管理/事件总线的选择）
+## 一、按【修改级别】决定研究深度与分析法
 
-2. **逻辑链路追踪**
-   - 结合日志中的网络请求和控制台输出，追踪完整的数据流
-   - 定位异常发生在哪个层级：数据层/服务层/状态层/视图层
-   - 分析错误传播路径和异常处理是否到位
+报告中每个问题都标注了修改级别，据此选择分析路线：
 
-3. **架构合理性评估**
-   - API设计是否匹配业务语义（RESTful/GraphQL/BFF层的取舍）
-   - 状态管理策略是否匹配当前业务复杂度
-   - 是否存在循环依赖、过度耦合、或职责不清的模块
-   - 技术栈选型是否匹配当前和可预见的业务规模
+- **🎨 前端修改**：若为纯UI/布局/样式 → 走【第五节·UI双维评定】；若涉及前端逻辑/交互 → 走【第三节·分析链路】
+- **🔧 后端/业务流程**：走【第三节·分析链路】，必须追踪 API→Service→数据模型 全链路 + 业务流程影响
+- **🏗️ 模块重做**：必须做整个模块纵向链路 + 横向影响性分析（第二节），给架构级整改
+- **✨ 新需求**：先做概念设计（业务流程、模块边界与职责、对外接口、依赖方向），再评估现有架构承载力与集成点
 
-4. **解决方案**
-   - ⚠️ 如果涉及架构整改：不能偷懒只给前端补丁方案
-   - 必须先给出架构整改方案（改动范围、风险评估、迁移路径）
-   - 再给临时缓解方案
-   - 最后给出长期演进路线图
+> 对**被反复提出问题**的模块（同一模块多个问题），要**升维思考**：不头痛医头，追问是不是架构/设计层面的系统性缺陷。
 
-### B. UI/样式类问题
-→ 从视觉设计体系宏观分析
+## 二、变更前三思·影响分析（改代码前必做）
 
-1. **页面规划与布局分析**
-   - 当前页面的整体布局结构是否合理
-   - 区域划分是否符合信息层级和用户动线
-   - 响应式策略是否完善（移动端/平板/桌面适配）
+1. **资料收集**（收集不全不下结论）：技术架构现状（技术栈/分层/模块边界）、业务流程、源码路径与现有写法、组件定位/触发链路/数据来源/组件关系/样式体系/业务逻辑/历史背景
+2. **拓扑完整度核验**：先 grep 改动目标的类名/方法名/接口名，找全**真实调用点**，确认“依赖谁/被谁依赖”
+3. **波及面评估**：沿被依赖方向定位受影响的模块**及其功能细项**，列出改动会不会改坏下游
 
-2. **元素功能定义审视**
-   - 问题元素的语义角色是否明确（按钮/输入/导航/内容区）
-   - 同类元素的视觉一致性（尺寸/间距/交互反馈）
-   - 元素的可见性层级（z-index堆叠关系是否合理）
+## 三、统一分析链路（逐环节走完，禁止跳步）
 
-3. **视觉体系评估**
-   - 配色方案是否统一（主色/辅助色/语义色/中性色的使用规范）
-   - 字体层级是否清晰（标题/正文/辅助文字的大小和权重梯度）
-   - 间距系统是否一致（是否遵循统一的spacing scale）
+\`\`\`
+【组件树定位】→ 找到具体文件
+【数据流追踪】API → Service → State → Props → Component
+【交互链路追踪】用户操作 → 事件处理 → 状态变更 → 视图更新 → 副作用
+【依赖关系分析】该组件依赖了哪些子组件 / 工具函数 / Hooks / Context
+【问题根因定位】在以上链路中究竟哪个环节出了问题（给出确切文件与代码位置）
+【修改方案设计】基于完整链路理解给出方案
+\`\`\`
 
-4. **设计系统建议**
-   - 是否需要建立或完善Design Token体系
-   - 组件库的样式抽象是否足够（避免重复定义/样式冲突）
-   - 主题切换/暗色模式的扩展性考量
+## 四、同类问题全排查（泛化，禁止只修一个点）
 
-### 输出格式
-对每个问题按以下结构输出：
-1. **根因**（一句话总结）
-2. **深度分析**（按上述对应路径展开）
-3. **解决方案**（分短期/中期/长期）
-4. **验证方法**
+发现一个问题时，先判断它是**孤立点**还是**模式**：
+- 若属模式（相同函数调用/相同反模式/相同缺失校验/同类入口缺失）→ grep 横向排查**所有同类对象**，列全待修点，一次性整体修复，禁止“发现模式却只修一个”
+
+## 五、UI/布局问题：宏观 + 微观双维评定 + 量化尺寸推理
+
+**宏观架构**：布局骨架是否匹配任务类型（数据密集→表格/仪表盘、分步→向导、多对象→左右分栏、轻量→弹窗）；功能区职责是否单一；信息架构无巨型/空壳页
+**微观元素**：归属与主体（操作的业务对象是否明确）、位置与聚合、一致性与冲突（控件类型与语义匹配，如二元开关用Switch）、反馈与容错（空/错/加载态）、尺寸与层叠
+**量化尺寸推理**：不靠“看着挤”，必须从源码+数据模型算出具体数字（如“容器宽720 - 固定元素 = 剩余，是否够”、“8列共90，溢出”）
+
+## 六、修改方案要求
+
+- 定位到**具体文件、函数、代码行**，说明怎么改、为什么这样改
+- **至少给出多方案对比**：如“治标局部补丁 vs 治本重构公共逻辑”，逐方案标明代价/风险
+- **涉及大整改/模块重做**：不许只给前端补丁，必须给：①架构整改方案（范围/风险/迁移路径）②**逐一列出被牵连的其他模块及其具体修改内容**（哪个文件、改什么）③临时缓解方案（如需）④长期演进
+- 每项修改标注优先级：**P0**阻断/**P1**应改/**P2**建议
+
+## 七、输出格式（每个问题）
+
+1. **需要的资料 & 已查阅的文件**（列出实际研究了哪些）
+2. **根因**（一句话，指向确切代码位置/页面元素）
+3. **分析链路还原**（按第三节；UI问题附宏观+微观+量化尺寸）
+4. **影响范围**（波及模块 + 同类待修点清单）
+5. **修改方案**（多方案对比 + 跨模块改动清单 + P0/P1/P2）
+6. **验证方法**
 
 ## 报告统计
 
 - 发现时间: ${dateStr} | 问题总数: ${issues.length} | 错误: ${totalErrors} | 失败请求: ${totalFailed}
 
-请对每个问题分别给出分析报告。`;
+请对每个问题分别给出研究式分析报告。`;
 
     md += `## 🤖 AI 分析提示词\n\n> 将以下提示词复制到AI对话中，获取深度分析报告：\n\n\`\`\`\n${aiPrompt}\n\`\`\`\n\n---\n\n*由 Qoder Test Helper 自动生成*\n`;
     return md;
@@ -537,6 +542,7 @@
       <div class="qoder-panel-header">
         <div class="qoder-panel-title"><span class="qoder-panel-logo">🛠</span><span>Qoder Test Helper</span></div>
         <div class="qoder-panel-actions">
+          <button class="qoder-btn-icon" id="qoder-btn-clear-all" title="清空所有问题">🗑</button>
           <button class="qoder-btn-icon" id="qoder-btn-minimize" title="最小化">─</button>
           <button class="qoder-btn-icon" id="qoder-btn-close" title="隐藏面板">✕</button>
         </div>
@@ -552,7 +558,7 @@
             <button class="qoder-btn qoder-btn-primary" id="qoder-btn-new-element" style="flex:1">🎯 元素问题</button>
             <button class="qoder-btn qoder-btn-secondary" id="qoder-btn-new-flow" style="flex:1">🔄 流程问题</button>
           </div>
-          <button class="qoder-btn qoder-btn-dark qoder-btn-full" id="qoder-btn-gen-report" style="margin-top:6px" disabled>📄 生成测试报告</button>
+          <button class="qoder-btn qoder-btn-dark qoder-btn-full" id="qoder-btn-gen-report" style="margin-top:6px" disabled>📋 生成测试报告到粘贴板</button>
         </div>
 
         <!-- 新增问题工作流 -->
@@ -582,14 +588,10 @@
 
           <!-- 分类 + 描述 -->
           <div class="qoder-workflow-panel qoder-hidden" id="qoder-wf-editing">
-            <label class="qoder-label">问题分类 <span class="qoder-hint-inline">(可选，不选则不显示)</span></label>
-            <!-- 元素问题分类 -->
-            <div class="qoder-category-grid" id="qoder-cat-element">
-              ${Object.entries(ISSUE_CATEGORIES).map(([k, v]) => `<button class="qoder-cat-btn" data-cat="${k}">${v.label}</button>`).join('')}
-            </div>
-            <!-- 流程问题分类 -->
-            <div class="qoder-category-grid qoder-hidden" id="qoder-cat-flow">
-              ${Object.entries(FLOW_CATEGORIES).map(([k, v]) => `<button class="qoder-cat-btn" data-cat="${k}">${v.label}</button>`).join('')}
+            <label class="qoder-label">修改级别 <span class="qoder-hint-inline">(帮助AI判断处理深度，可选)</span></label>
+            <!-- 修改级别分类 -->
+            <div class="qoder-category-grid" id="qoder-cat-grid">
+              ${Object.entries(ISSUE_LEVELS).map(([k, v]) => `<button class="qoder-cat-btn" data-cat="${k}" title="${v.hint}">${v.label}</button>`).join('')}
             </div>
             <label class="qoder-label" style="margin-top:10px">问题描述</label>
             <textarea class="qoder-textarea" id="qoder-problem-desc" placeholder="请描述你遇到的问题..." rows="3"></textarea>
@@ -637,10 +639,8 @@
     const btnDownloadMD = document.getElementById('qoder-btn-download-md');
     const btnDownloadZip = document.getElementById('qoder-btn-download-zip');
     const btnCopyPrompt = document.getElementById('qoder-btn-copy-prompt');
-    const catElementGrid = document.getElementById('qoder-cat-element');
-    const catFlowGrid = document.getElementById('qoder-cat-flow');
+    const catGrid = document.getElementById('qoder-cat-grid');
     let selectedCategory = null;
-    let activeCatGrid = null; // 当前激活的分类网格
 
     function showWf(name) {
       wfSection.classList.remove('qoder-hidden');
@@ -661,11 +661,10 @@
       const cards = issueListEl.querySelectorAll('.qoder-issue-card');
       cards.forEach(c => c.remove());
       issues.forEach((issue, i) => {
-        const catMap = issue.type === 'flow' ? FLOW_CATEGORIES : ISSUE_CATEGORIES;
-        const cat = issue.category ? catMap[issue.category]?.label || '' : '';
+        const cat = issue.category ? ISSUE_LEVELS[issue.category]?.label || '' : '';
         const typeBadge = issue.type === 'flow' ? '<span class="qoder-issue-type qoder-type-flow">流程</span>' : '<span class="qoder-issue-type qoder-type-elem">元素</span>';
         const elemInfo = issue.type === 'flow'
-          ? `<span class="qoder-issue-elems">${(issue.logs||[]).length}条日志</span>`
+          ? `<span class="qoder-issue-elems">${(issue.actions||[]).length}步 / ${(issue.logs||[]).length}日志</span>`
           : `<span class="qoder-issue-elems">${issue.elements.length}个元素</span>`;
         const card = document.createElement('div');
         card.className = 'qoder-issue-card';
@@ -695,25 +694,10 @@
       selectedCategory = null;
       workflowMode = null;
       issueLogStart = null;
-      activeCatGrid = null;
-      catElementGrid.querySelectorAll('.qoder-cat-btn').forEach(b => b.classList.remove('qoder-cat-active'));
-      catFlowGrid.querySelectorAll('.qoder-cat-btn').forEach(b => b.classList.remove('qoder-cat-active'));
+      catGrid.querySelectorAll('.qoder-cat-btn').forEach(b => b.classList.remove('qoder-cat-active'));
       panelTextarea.value = '';
       reportActions.classList.add('qoder-hidden');
       lastGeneratedMD = '';
-    }
-
-    // 切换到对应分类网格
-    function switchCategoryGrid(mode) {
-      if (mode === 'element') {
-        catElementGrid.classList.remove('qoder-hidden');
-        catFlowGrid.classList.add('qoder-hidden');
-        activeCatGrid = catElementGrid;
-      } else if (mode === 'flow') {
-        catElementGrid.classList.add('qoder-hidden');
-        catFlowGrid.classList.remove('qoder-hidden');
-        activeCatGrid = catFlowGrid;
-      }
     }
 
     // === 事件绑定 ===
@@ -728,11 +712,24 @@
       panel.style.display = 'none'; panelVisible = false; exitSelectorMode();
     });
 
+    // 一键清空所有问题（无需刷新页面）
+    document.getElementById('qoder-btn-clear-all').addEventListener('click', () => {
+      if (issues.length === 0 && workflowMode === null) { showToast('没有可清空的内容'); return; }
+      issues = [];
+      issueIdCounter = 0;
+      clearRecorderData();
+      resetWorkflow();
+      hideWf();
+      exitSelectorMode();
+      updateIssueList();
+      showToast('已清空所有问题');
+    });
+
     // 新增元素问题
     document.getElementById('qoder-btn-new-element').addEventListener('click', () => {
       resetWorkflow();
       workflowMode = 'element';
-      issueLogStart = { logs: recorderData.logs.length, networkRequests: recorderData.networkRequests.length };
+      issueLogStart = { logs: recorderData.logs.length, networkRequests: recorderData.networkRequests.length, userActions: recorderData.userActions.length };
       showWf('selecting');
       enterSelectorMode();
     });
@@ -741,7 +738,7 @@
     document.getElementById('qoder-btn-new-flow').addEventListener('click', () => {
       resetWorkflow();
       workflowMode = 'flow';
-      issueLogStart = { logs: recorderData.logs.length, networkRequests: recorderData.networkRequests.length };
+      issueLogStart = { logs: recorderData.logs.length, networkRequests: recorderData.networkRequests.length, userActions: recorderData.userActions.length };
       // 确保日志采集已启动
       if (!isRecording) {
         startRecorder();
@@ -753,7 +750,6 @@
     btnNextStep.addEventListener('click', () => {
       if (workflowMode !== 'element' || selectedElements.length === 0) return;
       exitSelectorMode();
-      switchCategoryGrid('element');
       showWf('editing');
       panelTextarea.focus();
     });
@@ -761,7 +757,6 @@
     // 流程问题：下一步（停止录制→进入描述）
     btnFlowNext.addEventListener('click', () => {
       if (workflowMode !== 'flow') return;
-      switchCategoryGrid('flow');
       showWf('editing');
       panelTextarea.focus();
     });
@@ -772,7 +767,7 @@
       else if (workflowMode === 'flow') { showWf('flow'); }
     });
 
-    // 分类选择（两个网格共用逻辑）
+    // 分类选择
     function onCategoryClick(grid, categories) {
       grid.addEventListener('click', (e) => {
         const btn = e.target.closest('.qoder-cat-btn');
@@ -789,23 +784,23 @@
         // 自动填入默认描述
         const currentVal = panelTextarea.value.trim();
         const isEmpty = currentVal === '';
-        const isPrevHint = Object.values(categories).some(c => c.hint === currentVal)
-                        || Object.values(ISSUE_CATEGORIES).some(c => c.hint === currentVal)
-                        || Object.values(FLOW_CATEGORIES).some(c => c.hint === currentVal);
+                const isPrevHint = Object.values(ISSUE_LEVELS).some(c => c.hint === currentVal);
         if (isEmpty || isPrevHint) {
           panelTextarea.value = selectedCategory ? categories[selectedCategory]?.hint || '' : '';
         }
       });
     }
-    onCategoryClick(catElementGrid, ISSUE_CATEGORIES);
-    onCategoryClick(catFlowGrid, FLOW_CATEGORIES);
+        onCategoryClick(catGrid, ISSUE_LEVELS);
 
     // 保存问题
     btnSaveIssue.addEventListener('click', () => {
       const desc = panelTextarea.value.trim() || '(未填写描述)';
-      const startIdx = issueLogStart || { logs: 0, networkRequests: 0 };
+      const startIdx = issueLogStart || { logs: 0, networkRequests: 0, userActions: 0 };
       const issueLogs = recorderData.logs.slice(startIdx.logs);
       const issueNets = recorderData.networkRequests.slice(startIdx.networkRequests);
+      const issueActions = recorderData.userActions
+        .slice(startIdx.userActions || 0)
+        .filter(a => ['click', 'dblclick', 'change', 'submit'].includes(a.type));
 
       if (workflowMode === 'element') {
         if (selectedElements.length === 0) { showToast('请先选择元素'); return; }
@@ -828,6 +823,7 @@
           description: desc,
           pageUrl: window.location.href,
           elements: [],
+          actions: issueActions,
           logs: issueLogs,
           networkRequests: issueNets,
           timestamp: Date.now()
@@ -909,7 +905,7 @@
       if (flowStatsEl && workflowMode === 'flow') {
         const startIdx = issueLogStart || { logs: 0, networkRequests: 0 };
         const flowLogs = recorderData.logs.length - startIdx.logs;
-        const flowActions = recorderData.userActions.length;
+        const flowActions = recorderData.userActions.length - (startIdx.userActions || 0);
         flowStatsEl.textContent = `${flowLogs}条日志 | ${flowActions}次操作`;
       }
     }
