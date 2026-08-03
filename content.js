@@ -50,10 +50,27 @@
   }
 
   function extractElementInfo(el) {
+    // 子元素结构预览（前 5 个直接子元素，帮助 AI 理解外层容器内部结构）
+    const childPreview = [];
+    try {
+      for (let i = 0; i < Math.min(el.children?.length || 0, 5); i++) {
+        const c = el.children[i];
+        const cText = (c.textContent?.trim().substring(0, 30)) || '';
+        childPreview.push({
+          tag: c.tagName.toLowerCase(),
+          cls: (c.className && typeof c.className === 'string') ? c.className.trim().split(/\s+/).slice(0, 3).join(' ') : '',
+          id: c.id || '',
+          text: cText
+        });
+      }
+    } catch (e) { /* 忽略 */ }
     return {
       xpath: getXPath(el),
       tag: el.tagName.toLowerCase(),
-      text: (el.textContent?.trim().substring(0, 80)) || '',
+      cls: (el.className && typeof el.className === 'string') ? el.className.trim().split(/\s+/).slice(0, 5).join(' ') : '',
+      id: el.id || '',
+      text: (el.textContent?.trim().substring(0, 120)) || '',
+      children: childPreview,
       pageUrl: window.location.href
     };
   }
@@ -277,10 +294,25 @@
         const typeTag = issue.type === 'flow' ? '`流程` ' : '';
         md += `### ${globalIdx}. ${typeTag}${issue.description}${catLabel ? ` _${catLabel}_` : ''}\n\n`;
 
-        // 元素问题：显示 XPath 列表
+        // 元素问题：显示 XPath 列表 + 元素上下文（文本/类名/id/子元素预览），避免 AI 对外层容器失焦
         if (issue.type === 'element' && issue.elements.length > 0) {
           md += `**元素:**\n`;
-          issue.elements.forEach(el => { md += `- \`${el.xpath}\`\n`; });
+          issue.elements.forEach(el => {
+            md += `- xpath: \`${el.xpath}\`\n`;
+            const cls = el.cls ? `.${el.cls.split(' ').join('.')}` : '';
+            const id = el.id ? `#${el.id}` : '';
+            if (cls || id) md += `  - 选择器: \`<${el.tag || '?'}>${id}${cls}\`\n`;
+            if (el.text) md += `  - 文本: "${el.text.substring(0, 100)}"\n`;
+            if (Array.isArray(el.children) && el.children.length > 0) {
+              md += `  - 子元素预览:\n`;
+              el.children.forEach(c => {
+                const cCls = c.cls ? `.${c.cls.split(' ').join('.')}` : '';
+                const cId = c.id ? `#${c.id}` : '';
+                const cTxt = c.text ? ` "${c.text}"` : '';
+                md += `    - \`<${c.tag}>${cId}${cCls}\`${cTxt}\n`;
+              });
+            }
+          });
           md += `\n`;
         }
 
